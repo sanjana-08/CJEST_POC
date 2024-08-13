@@ -6,7 +6,7 @@ import shutil
 import uuid
 from pathlib import Path
 import requests
-#import geopandas as gpd
+import geopandas as gpd
 import os
 import urllib3
 import sys
@@ -21,7 +21,7 @@ from typing import List
 BASE_URL_FIPS="https://www2.census.gov/geo/docs/maps-data/data/geo_tallies2020/2020talliesbystate.xlsx"
 ACS_URL =""
 DECENNIAL_URL = ""
-
+CENSUS_ACS_FIPS_CODES_TO_SKIP = ["60", "66", "69", "78"]
 class GeoFileType:
     SHP = 1
     GEOJSON = 2
@@ -113,7 +113,7 @@ class CensusETL:
         statefp_column = df['STATEFP'].astype(str).tolist()
        
 
-        print(type(statefp_column[0]))
+      
         for fips_code in statefp_column:
             if fips_code!="nan":
                 self.STATE_FIPS_CODES.append((fips_code))
@@ -159,7 +159,7 @@ class CensusETL:
     
     def get_population_data(self, data_path:Path):
         """Downloads census acs dataset that hold population data"""
-        CENSUS_ACS_FIPS_CODES_TO_SKIP = ["60", "66", "69", "78"]
+        
         variables =[ "B01001_003E",  # Estimate!!Total:!!Male:!!Under 5 years
             "B01001_004E",  # Estimate!!Total:!!Male:!!5 to 9 years
             "B01001_005E",  # Estimate!!Total:!!Male:!!10 to 14 years
@@ -237,10 +237,10 @@ class CensusETL:
                     f"Downloading data for state/territory with FIPS code {fips} {census_api_key}"
                 )
                 try:
-                    print("fips",fips)
+                   
                     response = censusdata.download(
                         "acs5",
-                        2019,
+                        2010,
                         censusdata.censusgeo([("state", fips), ("county", "*"), ("tract", "*")]),
                         var=variable,
                         key =os.environ.get("CENSUS_API_KEY"),
@@ -252,151 +252,63 @@ class CensusETL:
                         f"Could not download data for state/territory with FIPS code {fips} because {e}"
                     )
                     raise e
-                print("kl", dfs)
+           
                 dfs = pd.DataFrame(dfs[0])
-                print(dfs)
+          
                 dfs[tract_output_field_name] = dfs.index.to_series().apply(
             func=self._fips_from_censusdata_censusgeo
         )
+                acs_data_path.parent.mkdir(parents=True, exist_ok=True)
                 acs_data_path_st = data_path / "census" / "pop" /"acs_census"/f"acs_census_data_state_{fips}.csv"
                 dfs.to_csv(acs_data_path_st, index=False) 
         
         
-    #     print(dfs.__sizeof__)
-        
-    #     df = pd.concat(dfs)
-    #     print(df.shape)
-    #     temp_data = data_path / "census" / "pop" /"acs_census"/"temp_census_data.csv"
-    #     acs_data_path.parent.mkdir(parents=True, exist_ok=True)
-    #     df.to_csv(temp_data, index=False) 
-    #     print("hjhk")
-    #     #print(df)
-        
+  
 
-    #     df[tract_output_field_name] = df.index.to_series().apply(
-    #     func=self._fips_from_censusdata_censusgeo
-    # )
-        
+    def merge_csv_shp_file(self,data_path):
+     
        
+       for fips in self.STATE_FIPS_CODES:
+            if fips in CENSUS_ACS_FIPS_CODES_TO_SKIP:
+                print(
+                f"Skipping download for state/territory with FIPS code {fips}"
+            )
+            else:
+
+                shapefile_path = data_path / "census" / "shp" /f"{fips}"/f"tl_2010_{fips}_tract10.shp"
+                csv_path =  data_path / "census" / "pop" /"acs_census"/f"acs_census_data_state_{fips}.csv"
+                try:
+                    gdf_shapefile = gpd.read_file(shapefile_path)
+                    
+                    df_csv = pd.read_csv(csv_path)
+                    #df_csv["fips"] = df_csv["fips"].astype(str).apply(lambda x: x.zfill(2))
+                    df_csv.rename(columns={'B01001_001E': 'TOTAL POPULATION ESTIMATE'}, inplace=True)
+                    
+ 
+            
+
+                    # Ensure that the merge columns have the same data type
+                    gdf_shapefile['GEOID10'] = gdf_shapefile['GEOID10'].astype(int)
+                    df_csv['GEOID10_TRACT'] = df_csv['GEOID10_TRACT'].astype(int)
+                    # Merge on the common key
+            # Replace 'common_key' with the actual column name used for merging
+                    merged_gdf = gdf_shapefile.merge(df_csv, how='left', left_on='GEOID10', right_on= 'GEOID10_TRACT')
+                    # Save the updated GeoDataFrame to a new shapefile
+                    updated_shapefile_path = data_path / "census" / "merged" /f"tl_2010_{fips}_tract10_merged"
+                    updated_shapefile_path.mkdir(parents=True, exist_ok=True)
+                    merged_gdf.to_file(updated_shapefile_path, driver='ESRI Shapefile')
+                except ValueError as e:
+                        print(
+                            f"Could not find data for state/territory with FIPS code {fips} because {e}"
+                        )
+                        raise e
+
+         
+            
 
 
-    #     #acs_data_path.parent.mkdir(parents=True, exist_ok=True)
-    #     df.to_csv(acs_data_path, index=False) 
-        
-
-        
-        # acs_data_path.parent.mkdir(parents=True, exist_ok=True)
-        # Downloader.download_file_from_url(ACS_URL, acs_data_path)
-
-        # if not acs_data_path.is_file():
-        #     sys.exit(f"ACS CENSUS CSV file not found at path {acs_data_path}")
-        # print(f"Reading ACS CENSUS data from {acs_data_path}")
 
 
-
-
-        # print(f"Fetching DECENNIAL CENSUS data from URL: {DECENNIAL_URL}")
-        # dec_data_path = data_path / "census" / "pop" /"decennial_census"/"decennial_census_data.csv"
-
-        
-        # dec_data_path.parent.mkdir(parents=True, exist_ok=True)
-        # Downloader.download_file_from_url(DECENNIAL_URL, dec_data_path)
-
-        # if not dec_data_path.is_file():
-        #     sys.exit(f"DECENNIAL CENSUS CSV file not found at path {dec_data_path}")
-        # print(f"Reading DECENNIAL CENSUS data from {dec_data_path}")
-
-
-
-
-
-
-
-
-    # def _transform_to_geojson(self, fips_code: str) -> None:
-    #     """Transforms a shapefile to GeoJSON format."""
-    #     shp_file_path = self._path_for_fips_file(fips_code, GeoFileType.SHP)
-    #     geojson_file_path = self._path_for_fips_file(fips_code, GeoFileType.GEOJSON)
-
-    #     print(f"Transforming shapefile to GeoJSON for FIPS code: {fips_code}")
-    #     if not geojson_file_path.is_file():
-    #         cmd = ["ogr2ogr", "-f", "GeoJSON", str(geojson_file_path), str(shp_file_path)]
-    #         try:
-    #             subprocess.run(cmd, check=True, capture_output=True, text=True)
-    #             print(f"Transformation complete: {geojson_file_path}")
-    #         except subprocess.CalledProcessError as e:
-    #             print(f"Command '{e.cmd}' returned non-zero exit status {e.returncode}.")
-    #             print(f"Standard Output: {e.stdout}")
-    #             print(f"Standard Error: {e.stderr}")
-
-    # def _generate_tract_table(self) -> None:
-    #     """Generates a table of tract IDs from GeoJSON files."""
-    #     print("Generating national tract table from GeoJSON files.")
-    #     for file in self.GEOJSON_BASE_PATH.rglob("*.json"):
-    #         print(f"Processing file: {file}")
-    #         with open(file, encoding="utf-8") as f:
-    #             geojson = json.load(f)
-    #             for feature in geojson["features"]:
-    #                 tractid10 = feature["properties"].get("GEOID10", None)
-    #                 if tractid10:
-    #                     self.TRACT_NATIONAL.append(str(tractid10))
-    #                     tractid10_state_id = tractid10[:2]
-    #                     if not self.TRACT_PER_STATE.get(tractid10_state_id):
-    #                         self.TRACT_PER_STATE[tractid10_state_id] = []
-    #                     self.TRACT_PER_STATE[tractid10_state_id].append(tractid10)
-    #                     print(f"Processed tract ID: {tractid10}")
-
-    # def transform(self) -> None:
-    #     """Executes the transformation process."""
-    #     for index, fips_code in enumerate(self.STATE_FIPS_CODES):
-    #         print(f"Transforming FIPS {fips_code} to GeoJSON – {index+1} of {len(self.STATE_FIPS_CODES)}")
-    #         self._transform_to_geojson(fips_code)
-    #     self._generate_tract_table()
-
-    # def _load_into_state_csvs(self, fips_code: str) -> None:
-    #     """Loads tract IDs into CSV files for each state."""
-    #     tractid10_list = self.TRACT_PER_STATE.get(fips_code, [])
-    #     csv_path = self._path_for_fips_file(fips_code, GeoFileType.CSV)
-    #     print(f"Loading tract IDs into CSV for FIPS code: {fips_code}")
-    #     with open(csv_path, mode="w", newline="", encoding="utf-8") as cbg_csv_file:
-    #         tract_csv_file_writer = csv.writer(cbg_csv_file, delimiter=",", quotechar='"', quoting=csv.QUOTE_MINIMAL)
-    #         for tractid10 in tractid10_list:
-    #             tract_csv_file_writer.writerow([tractid10])
-    #             print(f"Written tract ID to CSV: {tractid10}")
-
-    # def _load_national_csv(self):
-    #     """Loads national tract IDs into a CSV file."""
-    #     print("Loading national tract IDs into CSV.")
-    #     if not self.NATIONAL_TRACT_CSV_PATH.is_file():
-    #         with open(self.NATIONAL_TRACT_CSV_PATH, mode="w", newline="", encoding="utf-8") as cbg_csv_file:
-    #             cbg_csv_file_writer = csv.writer(cbg_csv_file, delimiter=",", quotechar='"', quoting=csv.QUOTE_MINIMAL)
-    #             for geoid10 in self.TRACT_NATIONAL:
-    #                 cbg_csv_file_writer.writerow([geoid10])
-    #                 print(f"Written national tract ID to CSV: {geoid10}")
-
-    # def _load_national_geojson(self):
-    #     """Combines all GeoJSON files into a national GeoJSON file."""
-    #     print("Combining GeoJSON files into a national GeoJSON.")
-    #     usa_df = gpd.GeoDataFrame()
-
-    #     for file_name in self.GEOJSON_BASE_PATH.rglob("*.json"):
-    #         print(f"Reading GeoJSON file: {file_name}")
-    #         state_gdf = gpd.read_file(file_name)
-    #         usa_df = usa_df.append(state_gdf)
-
-    #     print("Reprojecting to WGS84 coordinate system.")
-    #     usa_df = usa_df.to_crs("+proj=longlat +ellps=WGS84 +datum=WGS84 +no_defs")
-    #     usa_df.to_file(self.NATIONAL_TRACT_JSON_PATH, driver="GeoJSON")
-    #     print(f"National GeoJSON file created: {self.NATIONAL_TRACT_JSON_PATH}")
-
-    # def load(self) -> None:
-    #     """Executes the loading process."""
-    #     print("Loading data into CSV and GeoJSON files.")
-    #     for fips_code in self.TRACT_PER_STATE:
-    #         self._load_into_state_csvs(fips_code)
-    #     self._load_national_csv()
-    #     self._load_national_geojson()
-    #     print("Census data complete")
 
 if __name__ == "__main__":
     data_path = Path("data")
@@ -407,7 +319,7 @@ if __name__ == "__main__":
     print("Starting FIPS codes extraction.")
     census_etl.fetch_and_extract_fips_codes(data_path)
 
-    # Step 2: Download zip files and extract them
+    # #Step 2: Download zip files and extract them
     # print("Downloading and extracting shapefiles.")
     # for url, destination in census_etl.get_data_sources():
     #     print("url", url)
@@ -415,8 +327,10 @@ if __name__ == "__main__":
     #     print("Destination", destination)
     #     downloader.download_zip_file_from_url(url, destination)
 
-    print("Downloading and extracting census decennial and cencus acs")
-    census_etl.get_population_data(data_path)
+    # print("Downloading and extracting census decennial and cencus acs")
+    # census_etl.get_population_data(data_path)
+    print("Merging csv population data with shape files")
+    census_etl.merge_csv_shp_file(data_path)
 
 
     # # Step 3: Transform data
